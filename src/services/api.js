@@ -232,6 +232,69 @@ class ApiService {
   getObjectUrl(bucketName, objectName) {
     return `${API_BASE_URL}/buckets/${bucketName}/download?object=${encodeURIComponent(objectName)}`
   }
+
+  // **PHASE 3: Job Status API Methods**
+  
+  // Get job status
+  async getJobStatus(jobId) {
+    try {
+      const response = await this.request(`/upload/status/${jobId}`)
+      return response
+    } catch (error) {
+      throw error
+    }
+  }
+
+  // Poll job status with automatic retries
+  async pollJobStatus(jobId, onUpdate = null, maxAttempts = 60, intervalMs = 2000) {
+    return new Promise((resolve, reject) => {
+      let attempts = 0;
+      
+      const poll = async () => {
+        try {
+          attempts++;
+          const response = await this.getJobStatus(jobId);
+          
+          if (response.success && response.data) {
+            const job = response.data;
+            
+            // Call update callback if provided
+            if (onUpdate) {
+              onUpdate(job);
+            }
+            
+            // Check if job is complete
+            if (job.status === 'completed' || job.status === 'failed') {
+              resolve(job);
+              return;
+            }
+            
+            // Continue polling if not complete and under max attempts
+            if (attempts < maxAttempts) {
+              setTimeout(poll, intervalMs);
+            } else {
+              reject(new Error(`Job polling timeout after ${maxAttempts} attempts`));
+            }
+          } else {
+            reject(new Error('Invalid job status response'));
+          }
+        } catch (error) {
+          // If job not found or other error, stop polling
+          if (error.message.includes('404') || error.message.includes('not found')) {
+            reject(new Error('Job not found'));
+          } else if (attempts >= maxAttempts) {
+            reject(error);
+          } else {
+            // Retry on network errors
+            setTimeout(poll, intervalMs);
+          }
+        }
+      };
+      
+      // Start polling
+      poll();
+    });
+  }
 }
 
 export default new ApiService()
